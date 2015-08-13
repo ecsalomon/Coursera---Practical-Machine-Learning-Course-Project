@@ -1,0 +1,17 @@
+{
+    "contents" : "getData <- function(set = c(\"training\", \"testing\")) {\n  # Is the file absent? If so, download the data\n  filename <- paste(\"pml-\", set, \".csv\", sep = \"\")\n  if (!file.exists(filename)) {\n    URL <- paste(\"https://d396qusza40orc.cloudfront.net/predmachlearn/\",\n                 filename, sep = \"\")\n    download.file(URL, filename, method = \"curl\")\n  }\n  # return the data\n  read.csv(filename)\n}",
+    "created" : 1439485584501.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "458209458",
+    "id" : "73F3C279",
+    "lastKnownWriteTime" : 1439485614,
+    "path" : "~/Box Sync/Classes/Coursera/Data Science Specialization/8 Practical Machine Learning/Week 3/Course Project/getData.R",
+    "project_path" : "getData.R",
+    "properties" : {
+        "tempName" : "Untitled1"
+    },
+    "source_on_save" : false,
+    "type" : "r_source"
+}
