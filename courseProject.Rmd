@@ -14,16 +14,108 @@ The data for this project come from this source: http://groupware.les.inf.puc-ri
 
 
 Data 
-
-
-
 ```{r}
+library(caret)
+library(lattice)
+library(ggplot2)
+library(randomForest)
+library(BioSeqClass)
+library(doParallel)
+registerDoParallel(cores=4)
+```
+
+
+```{r, cache=TRUE}
 source("getData.R")
 training <- getData("training")
+trainReduce <- training[, c(8:11, 37:49, 60:68, 84:86, 102, 113:124, 140,
+                            151:160)]
+trainIndex = createDataPartition(trainReduce$classe, p = 0.50, list = FALSE)
+train = trainReduce[trainIndex,]
+validate = trainReduce[-trainIndex,]
 testing <- getData("testing")
 ```
 
 
+```{r, cache=TRUE}
+preProc <- preProcess(trainReduce[, 1:52], method = "pca", thresh = .5)
+trainPCA <- predict(preProc, trainReduce[, 1:52])
+trainPCA$classe <- trainReduce$classe
+set.seed(3)
+modFit <- train(classe ~ .,
+                method = "rf", data = trainPCA)
+varImp(modFit$finalModel)
+
+validateReduce <- validate[, c(8:11, 37:49, 60:68, 84:86, 102, 113:124, 140,
+                               151:160)]
+validatePCA5 <- predict(preProc, validateReduce[, 1:52])
+pca5predictions <- predict(modFit$finalModel, newdata = validatePCA5)
+
+table(pca5predictions, validateReduce$classe)
+```
+
+
+```{r}
+trainSelected <- trainReduce[, -removeCols]
+trainIndex = createDataPartition(trainSelected$classe, p = 0.50, list = FALSE)
+trainSel = trainSelected[trainIndex,]
+validateSel = trainSelected[-trainIndex,]
+
+train_control <- trainControl(method="repeatedcv", number=10, repeats=3)
+
+set.seed(3)
+modFitSel <- train(classe ~ ., trControl = train_control,
+                   method = "rf", data = trainSel)
+varImp(modFitSel$finalModel)
+
+selPredictions <- predict(modFitSel$finalModel, newdata = validateSel)
+
+table(selPredictions, validateSel$classe)
+
+```
+
+
+
+```{r}
+removeCols <- findCorrelation(cor(trainReduce[, -53]), cutoff = .7,
+                              verbose = FALSE)
+trainSelected <- trainReduce[, -removeCols]
+trainIndex = createDataPartition(trainSelected$classe, p = 0.50, list = FALSE)
+trainSel = trainSelected[trainIndex,]
+validateSel = trainSelected[-trainIndex,]
+
+train_control <- trainControl(method="repeatedcv", number=10, repeats=3)
+
+set.seed(3)
+modFitSel <- train(classe ~ ., trControl = train_control,
+                   method = "rf", data = trainSel)
+varImp(modFitSel$finalModel)
+
+selPredictions <- predict(modFitSel$finalModel, newdata = validateSel)
+
+table(selPredictions, validateSel$classe)
+
+```
+
+
+```{r}
+keepers <- selectWeka(train = trainReduce[, -53], evaluator="CfsSubsetEval",
+                      search = "BestFirst")
+trainCFS <- trainReduce[, c(keepers, 53)]
+validateCFS <- validate[, c(keepers, 53)]
+
+train_control <- trainControl(method="repeatedcv", number=10, repeats=3)
+
+set.seed(3)
+modFitCFS <- train(classe ~ ., trControl = train_control,
+                   method = "rf", data = trainCFS)
+modFitCFS$finalModel
+
+CFSpredictions <- predict(modFitCFS$finalModel, newdata = validateCFS)
+
+table(CFSpredictions, validateCFS$classe)
+
+```
 
 
 What you should submit
