@@ -1,11 +1,13 @@
 ---
-title: "Predicting Correct Performance on Barbell Lifts from Accelerometers"
+title: "Predicting Manner of Barbell Lifts from Accelerometers"
 author: "Erika Salomon"
-date: "August 12, 2015"
+date: "August 16, 2015"
 output: html_document
 ---
 
-Background
+## Introduction 
+
+Personal tracking devices have allowed people to record a lot of information about what they are doing---how many steps they take, how many flights of stairs they climb, etc. The next frontier in movement tracking may be identifying *how* something was done. 
 
 Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
 
@@ -22,100 +24,76 @@ library(randomForest)
 library(BioSeqClass)
 library(doParallel)
 registerDoParallel(cores=4)
+rm(list = ls())
 ```
-
 
 ```{r, cache=TRUE}
 source("getData.R")
-training <- getData("training")
-trainReduce <- training[, c(8:11, 37:49, 60:68, 84:86, 102, 113:124, 140,
-                            151:160)]
-trainIndex = createDataPartition(trainReduce$classe, p = 0.50, list = FALSE)
-train = trainReduce[trainIndex,]
-validate = trainReduce[-trainIndex,]
-testing <- getData("testing")
+data <- getData("training")
+dataReduce <- data[, c(8:11, 37:49, 60:68, 84:86, 102, 113:124, 140, 151:160)]
+set.seed(3)
+trainIndex <- createDataPartition(dataReduce$classe, p = 0.50, list = FALSE)
+training <- dataReduce[trainIndex,]
+set.seed(3)
+testing <- dataReduce[-trainIndex,]
+testIndex <- createDataPartition(testing$classe, p = 0.50,
+                                list = FALSE)
+validation <- testing[-testIndex,]
+testing <- testing[testIndex,]
 ```
-
 
 ```{r, cache=TRUE}
-preProc <- preProcess(trainReduce[, 1:52], method = "pca", thresh = .5)
-trainPCA <- predict(preProc, trainReduce[, 1:52])
-trainPCA$classe <- trainReduce$classe
+trainSettings <- trainControl(method="repeatedcv", number=10, repeats=3)
 set.seed(3)
-modFit <- train(classe ~ .,
-                method = "rf", data = trainPCA)
-varImp(modFit$finalModel)
-
-validateReduce <- validate[, c(8:11, 37:49, 60:68, 84:86, 102, 113:124, 140,
-                               151:160)]
-validatePCA5 <- predict(preProc, validateReduce[, 1:52])
-pca5predictions <- predict(modFit$finalModel, newdata = validatePCA5)
-
-table(pca5predictions, validateReduce$classe)
+modFit52 <- train(classe ~ ., method = "rf", data = training,
+                  trControl = trainSettings)
+modFit52$finalModel
+predictions52 <- predict(modFit52$finalModel, newdata = validation)
+table(predictions52, validation$classe)
 ```
 
-
-```{r}
-trainSelected <- trainReduce[, -removeCols]
-trainIndex = createDataPartition(trainSelected$classe, p = 0.50, list = FALSE)
-trainSel = trainSelected[trainIndex,]
-validateSel = trainSelected[-trainIndex,]
-
-train_control <- trainControl(method="repeatedcv", number=10, repeats=3)
-
+```{r, cache=TRUE}
+pca <- preProcess(training[, 1:52], method = "pca", thresh = .5)
+trainingPCA <- predict(pca, training[, 1:52])
+trainingPCA$classe <- training$classe
 set.seed(3)
-modFitSel <- train(classe ~ ., trControl = train_control,
-                   method = "rf", data = trainSel)
-varImp(modFitSel$finalModel)
+modFitPCA <- train(classe ~ ., method = "rf", data = trainingPCA,
+                   trControl = trainSettings)
+modFitPCA$finalModel
 
-selPredictions <- predict(modFitSel$finalModel, newdata = validateSel)
+validationPCA <- predict(pca, validation[, 1:52])
+predictionsPCA <- predict(modFitPCA$finalModel, newdata = validationPCA)
 
-table(selPredictions, validateSel$classe)
-
+table(predictionsPCA, validation$classe)
 ```
 
-
-
 ```{r}
-removeCols <- findCorrelation(cor(trainReduce[, -53]), cutoff = .7,
+removeCols <- findCorrelation(cor(training[, -53]), cutoff = .6,
                               verbose = FALSE)
-trainSelected <- trainReduce[, -removeCols]
-trainIndex = createDataPartition(trainSelected$classe, p = 0.50, list = FALSE)
-trainSel = trainSelected[trainIndex,]
-validateSel = trainSelected[-trainIndex,]
-
-train_control <- trainControl(method="repeatedcv", number=10, repeats=3)
-
 set.seed(3)
-modFitSel <- train(classe ~ ., trControl = train_control,
-                   method = "rf", data = trainSel)
-varImp(modFitSel$finalModel)
-
-selPredictions <- predict(modFitSel$finalModel, newdata = validateSel)
-
-table(selPredictions, validateSel$classe)
-
+modFitCor <- train(classe ~ ., trControl = trainSettings,
+                   method = "rf", data = training[, -removeCols])
+modFitCor$finalModel
+predictionsCor <- predict(modFitCor$finalModel, newdata = validation)
+table(predictionsCor, validation$classe)
 ```
 
-
 ```{r}
-keepers <- selectWeka(train = trainReduce[, -53], evaluator="CfsSubsetEval",
-                      search = "BestFirst")
-trainCFS <- trainReduce[, c(keepers, 53)]
-validateCFS <- validate[, c(keepers, 53)]
-
-train_control <- trainControl(method="repeatedcv", number=10, repeats=3)
+keepCols <- selectWeka(train = training, evaluator="CfsSubsetEval",
+                       search = "BestFirst")
 
 set.seed(3)
-modFitCFS <- train(classe ~ ., trControl = train_control,
-                   method = "rf", data = trainCFS)
+modFitCFS <- train(classe ~ ., trControl = trainSettings, 
+                   method = "rf", data = training[, c(keepCols, 53)])
 modFitCFS$finalModel
 
-CFSpredictions <- predict(modFitCFS$finalModel, newdata = validateCFS)
+predictionsCFS <- predict(modFitCFS$finalModel, newdata = validation)
+saveRDS(modFitCFS, file="modFitCFS.rds")
 
-table(CFSpredictions, validateCFS$classe)
+table(predictionsCFS, validation$classe)
 
 ```
+
 
 
 What you should submit
