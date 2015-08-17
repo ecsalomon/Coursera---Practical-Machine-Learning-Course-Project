@@ -7,15 +7,13 @@ output: html_document
 
 ## Introduction 
 
-Personal tracking devices have allowed people to record a lot of information about what they are doing---how many steps they take, how many flights of stairs they climb, etc. The next frontier in movement tracking may be identifying *how* something was done. 
-
-Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
-
-The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment. 
+Personal tracking devices have allowed people to record a lot of information about what they are doing---how many steps they take, how many flights of stairs they climb, etc. The next frontier in movement tracking may be identifying *how* something was done. This project uses machine learning on data from the personal activity monitors of six participants performing barbell lifts to predict whether the exercise was performed correctly or with one of four common errors (i.e., throwing the elbows to the front, lifting the dumbbell only halfway, lowering the dumbbell only halfway, and throwing the hips to the front).[^fn-data] Monitors were attched to participants' belts, forearms, arms, and dumbells and tracking data was recorded over 10 repetitions of each of the five performance types (correct plus  the four errors).
 
 
+## Preparing for data analysis
 
-Data 
+This project makes use of several R packages (see code chunk below), which must be loaded prior to running the analyses. 
+
 ```{r}
 library(caret)
 library(lattice)
@@ -23,14 +21,67 @@ library(ggplot2)
 library(randomForest)
 library(BioSeqClass)
 library(doParallel)
+```
+
+### Some performance tweaks
+
+The `doParallel` class allows the use of multiple processor threads, which speeds up the training of machine learning algorithms. For this project, I have used four threads for training. The BioSeqClass package imports some data to the environment that is not used in the project, so I will also clear the environment before beginning to improve performance.
+
+```{r}
 registerDoParallel(cores=4)
 rm(list = ls())
 ```
 
-```{r, cache=TRUE}
+
+### Loading and cleaning data
+
+The `getData.R` file in the repository contains a function to download and/or import the data set for this project. 
+
+```{r, cache = TRUE}
 source("getData.R")
 data <- getData("training")
+head(data)
+```
+
+The initial data set contains many columns, several of which have mostly missing values. It also contains several columns such as time stamps that, while they may be good indicators of performance type, will not be useful for making predictions outside of the sample. Before beginning my analysis, I will remove these columns from the data set.
+
+```{r, cache = TRUE}
 dataReduce <- data[, c(8:11, 37:49, 60:68, 84:86, 102, 113:124, 140, 151:160)]
+```
+
+
+## Machine learning approach
+
+The goal of this project is to be able to predict the manner in which a barbell lift was done. I will use a random forest to make this prediction, as it is one of the best-performing machine learning classification algorithms. 
+
+### Feature extraction and selection
+
+For feature extraction and selection, I will compare four different approaches: 
+
+1. using *all* of the features in the reduced data set
+2. using principal components explaining 50% of the variance in the feature set
+3. removing features that highly correlated with other features
+4. selecting features on a combination of their intercorrelations with each other and their correlation with the outcome class
+
+Each of these approaches to feature selection will be used to train a random forest algorithm using repeated (3 times) 10-fold cross-validation. 
+
+```{r, cache = TRUE}
+trainSettings <- trainControl(method="repeatedcv", number=10, repeats=3)
+```
+
+### Model selection
+
+These approaches will produce four different models whose performance will be compared on several dimensions:
+
+1. their interpretability
+2. their speed
+3. their out of sample error on a common validation set
+
+The final sample will then be evaluated on a witheld test set to estimate its out of sample error rate. 
+
+This approach requires that the data be divded into training, validation, and test sets. Half of the data will be used for training, one quarter for validation, and one quarter for testing the final model.
+
+```{r, cache = TRUE}
 set.seed(3)
 trainIndex <- createDataPartition(dataReduce$classe, p = 0.50, list = FALSE)
 training <- dataReduce[trainIndex,]
@@ -42,8 +93,12 @@ validation <- testing[-testIndex,]
 testing <- testing[testIndex,]
 ```
 
-```{r, cache=TRUE}
-trainSettings <- trainControl(method="repeatedcv", number=10, repeats=3)
+
+
+
+
+
+```{r, cache = TRUE}
 set.seed(3)
 modFit52 <- train(classe ~ ., method = "rf", data = training,
                   trControl = trainSettings)
@@ -108,3 +163,8 @@ Does the submission build a machine learning algorithm to predict activity quali
 
 Do the authors describe what they expect the out of sample error to be and estimate the error appropriately with cross-validation?
 
+_________________________
+
+## References
+
+[^fn-data]: The data used in this project are [freely available](http://groupware.les.inf.puc-rio.br/har). See also: Velloso, E., Bulling, A., Gellersen, H., Ugulino, W., & Fuks, H. (2013). Qualitative activity recognition of weight lifting exercises. *Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13)*.
