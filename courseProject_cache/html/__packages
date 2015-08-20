@@ -1,0 +1,11 @@
+base
+lattice
+ggplot2
+caret
+randomForest
+scatterplot3d
+BioSeqClass
+foreach
+iterators
+doParallel
+plyr

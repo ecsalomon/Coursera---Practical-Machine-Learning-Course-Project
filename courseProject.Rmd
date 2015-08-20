@@ -1,7 +1,7 @@
 ---
 title: "Predicting Manner of Barbell Lifts from Accelerometers"
 author: "Erika Salomon"
-date: "August 16, 2015"
+date: "August 18, 2015"
 output: html_document
 ---
 
@@ -15,9 +15,10 @@ Personal tracking devices have allowed people to record a lot of information abo
 This project makes use of several R packages (see code chunk below), which must be loaded prior to running the analyses. 
 
 ```{r}
-library(caret)
 library(lattice)
 library(ggplot2)
+library(caret)
+library(plyr)
 library(randomForest)
 library(BioSeqClass)
 library(doParallel)
@@ -40,13 +41,12 @@ The `getData.R` file in the repository contains a function to download and/or im
 ```{r, cache = TRUE}
 source("getData.R")
 data <- getData("training")
-head(data)
 ```
 
-The initial data set contains many columns, several of which have mostly missing values. It also contains several columns such as time stamps that, while they may be good indicators of performance type, will not be useful for making predictions outside of the sample. Before beginning my analysis, I will remove these columns from the data set.
+The initial data set contains many columns, several of which have mostly missing values. It also contains several columns such as time stamps that, while they may be good indicators of performance type, will not be useful for making predictions outside of the sample. Before beginning my analysis, I will remove these columns from the data set. The remaining columns contain the names of the participants and the "instantaneous" measurements from the sensors.
 
 ```{r, cache = TRUE}
-dataReduce <- data[, c(8:11, 37:49, 60:68, 84:86, 102, 113:124, 140, 151:160)]
+dataReduce <- data[, c(2, 8:11, 37:49, 60:68, 84:86, 102, 113:124, 140, 151:160)]
 ```
 
 
@@ -71,100 +71,173 @@ trainSettings <- trainControl(method="repeatedcv", number=10, repeats=3)
 
 ### Model selection
 
-These approaches will produce four different models whose performance will be compared on several dimensions:
+These approaches will produce four different models whose performance will be compared on:
 
-1. their interpretability
-2. their speed
-3. their out of sample error on a common validation set
+1. their speed
+2. their out of sample error on a common validation set
 
 The final sample will then be evaluated on a witheld test set to estimate its out of sample error rate. 
 
-This approach requires that the data be divded into training, validation, and test sets. Half of the data will be used for training, one quarter for validation, and one quarter for testing the final model.
+### Creating training, validation, and test sets
+
+This approach requires that the data be divded into training, validation, and test sets. However, given that the data have a multilevel structure (time windows within trials within participants), simply dividing the test sets completely at random may result in an optimistic out of sample error estimate. The goal of estimating out of sample error is to predict how the algorithm will perform on a *new* data set with new measurements. These measurements would certainly come from new time windows and new barbell trials, and they would probably come from new people. If the same trials and people used in the training set are in the testing and validation sets, the out of sample error estimate will likely be too small. 
+
+For this reason, I will divide the data so that the data from four randomly assigned participants are used in training the algorithms, one additional randomly assigned participant is included in the validation set, and the test set contains data from the remaining participant.
 
 ```{r, cache = TRUE}
-set.seed(3)
-trainIndex <- createDataPartition(dataReduce$classe, p = 0.50, list = FALSE)
-training <- dataReduce[trainIndex,]
-set.seed(3)
-testing <- dataReduce[-trainIndex,]
-testIndex <- createDataPartition(testing$classe, p = 0.50,
-                                list = FALSE)
-validation <- testing[-testIndex,]
-testing <- testing[testIndex,]
+set.seed(3903)
+trainAssign <- rnorm(6)
+trainIndex <- trainAssign[order(trainAssign)][c(1:4)]
+names(trainAssign) <- with(dataReduce, levels(user_name))
+dataReduce$user_name <- revalue(dataReduce$user_name, replace = trainAssign)
+training <- dataReduce[dataReduce$user_name %in% trainIndex,]
+dataReduce <- dataReduce[!(dataReduce$user_name %in% trainIndex),]
+set.seed(5285)
+testAssign <- rnorm(3)
+testIndex <- testAssign[order(testAssign)][1]
+dataReduce$user_name <- with(dataReduce, factor(user_name))
+names(testAssign) <- with(dataReduce, levels(user_name))
+dataReduce$user_name <- revalue(dataReduce$user_name, replace = testAssign)
+testing <- dataReduce[dataReduce$user_name %in% testIndex,]
+validation <- dataReduce[!(dataReduce$user_name %in% testIndex),]
 ```
 
 
+## The models
 
+### Using all predictors
 
-
+The first model will be trained on all of the predictors.
 
 ```{r, cache = TRUE}
-set.seed(3)
-modFit52 <- train(classe ~ ., method = "rf", data = training,
-                  trControl = trainSettings)
+start52 <- Sys.time()
+set.seed(4567)
+modFit52 <- train(classe ~ ., method = "rf", data = training[, -1],
+                  trControl = trainSettings, preProcess = c("center", "scale"))
+end52 <- Sys.time()
+time52 <- end52 - start52
 modFit52$finalModel
 predictions52 <- predict(modFit52$finalModel, newdata = validation)
-table(predictions52, validation$classe)
+performance52 <- table(predictions52, validation$classe)
+errors52 <- performance52
+diag(errors52) <- NA
+OOSerror52 <- sum(sum(errors52, na.rm = TRUE)) / nrow(validation)
+print(paste("Time elapsed:", time52))
+print(performance52)
+print(paste("Out of sample error estimate:", OOSerror52))
 ```
+
+### Principal components analysis
+
+The second model will be trained on the first principal components explaining 50% of the variation in the features.
 
 ```{r, cache=TRUE}
-pca <- preProcess(training[, 1:52], method = "pca", thresh = .5)
-trainingPCA <- predict(pca, training[, 1:52])
+pca <- preProcess(training[, 2:53], method = "pca", thresh = .5)
+trainingPCA <- predict(pca, training[, 2:53])
 trainingPCA$classe <- training$classe
-set.seed(3)
+startPCA <- Sys.time()
+set.seed(7643)
 modFitPCA <- train(classe ~ ., method = "rf", data = trainingPCA,
-                   trControl = trainSettings)
+                   trControl = trainSettings, preProcess = c("center", "scale"))
+endPCA <- Sys.time()
+timePCA <- endPCA - startPCA
 modFitPCA$finalModel
-
-validationPCA <- predict(pca, validation[, 1:52])
+validationPCA <- predict(pca, validation[, 2:53])
 predictionsPCA <- predict(modFitPCA$finalModel, newdata = validationPCA)
-
-table(predictionsPCA, validation$classe)
+performancePCA <- table(predictionsPCA, validation$classe)
+errorsPCA <- performancePCA
+diag(errorsPCA) <- NA
+OOSerrorPCA <- sum(sum(errorsPCA, na.rm = TRUE)) / nrow(validation)
+print(paste("Time elapsed:", timePCA))
+print(performancePCA)
+print(paste("Out of sample error estimate:", OOSerrorPCA))
 ```
 
-```{r}
-removeCols <- findCorrelation(cor(training[, -53]), cutoff = .6,
-                              verbose = FALSE)
-set.seed(3)
+### Intercorrelations among predictors
+
+The third model will be trained on the features that remain after removing those features whose intercorrelations with other features is greater than .60.
+
+```{r, cache = TRUE}
+removeCols <- findCorrelation(cor(training[, -c(1, 54)]), cutoff = .6,
+                              verbose = FALSE) + 1
+startCor <- Sys.time()
+set.seed(4567)
 modFitCor <- train(classe ~ ., trControl = trainSettings,
-                   method = "rf", data = training[, -removeCols])
+                   method = "rf", data = training[, -c(1, removeCols)],
+                   preProcess = c("center", "scale"))
+endCor <- Sys.time()
+timeCor <- endCor - startCor
 modFitCor$finalModel
 predictionsCor <- predict(modFitCor$finalModel, newdata = validation)
-table(predictionsCor, validation$classe)
+performanceCor <- table(predictionsCor, validation$classe)
+errorsCor <- performanceCor
+diag(errorsCor) <- NA
+OOSerrorCor <- sum(sum(errorsCor, na.rm = TRUE)) / nrow(validation)
+print(paste("Time elapsed:", timeCor))
+print(performanceCor)
+print(paste("Out of sample error estimate:", OOSerrorCor))
 ```
 
-```{r}
-keepCols <- selectWeka(train = training, evaluator="CfsSubsetEval",
-                       search = "BestFirst")
+### Intercorrelations and Correlation with Class
 
-set.seed(3)
+The fourth model will be trained on features selected to reduce intercorrelations among the features and preserve high correlations with the class.[^fn-cfs]
+
+```{r, cache = TRUE}
+keepCols <- selectWeka(train = training[, -1], evaluator="CfsSubsetEval",
+                       search = "BestFirst") + 1
+startCFS <- Sys.time()
+set.seed(7642)
 modFitCFS <- train(classe ~ ., trControl = trainSettings, 
-                   method = "rf", data = training[, c(keepCols, 53)])
+                   method = "rf", data = training[, c(keepCols, 54)],
+                   preProcess = c("center", "scale"))
+endCFS <- Sys.time()
+timeCFS <- endCFS - startCFS
 modFitCFS$finalModel
-
 predictionsCFS <- predict(modFitCFS$finalModel, newdata = validation)
-saveRDS(modFitCFS, file="modFitCFS.rds")
-
-table(predictionsCFS, validation$classe)
-
+performanceCFS <- table(predictionsCFS, validation$classe)
+errorsCFS <- performanceCFS
+diag(errorsCFS) <- NA
+OOSerrorCFS <- sum(sum(errorsCFS, na.rm = TRUE)) / nrow(validation)
+print(paste("Time elapsed:", timeCFS))
+print(performanceCFS)
+print(paste("Out of sample error estimate:", OOSerrorCFS))
 ```
 
+## Model Selection
 
+One of the most obvious, and worrisome, outcomes from the validation predictions is that the "out of bag" error estimates from the `train` function vastly underestimate how the models perform on data from a new participant. This is exactly the concern I expressed earlier: the repeated *k*-fold validation procedure creates folds without regard to the dependencies in the data (that trials are nested within people) and is therefore optimistic about its performance on new data. An additional point of concern is that several of the models did not predict any instances of specific classes on the validation data. This will need to be taken into account when selecting a model.
 
-What you should submit
+Table 1 compares the four models trained.
 
-The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+| Feature extraction/selection method   | Out of sample error                              | Time to train (minutes) |
+|---------------------------------------|-------------------------------------------------:|------------------------:|
+| All features                          |  `r paste(round(OOSerror52*100), "%", sep = "")` |       `r round(time52)` |
+| Principal components analysis         | `r paste(round(OOSerrorPCA*100), "%", sep = "")` |      `r round(timePCA)` |
+| Feature intercorrelations             | `r paste(round(OOSerrorCor*100), "%", sep = "")` |      `r round(timeCor)` |
+| Intercorrelations + Class correlation | `r paste(round(OOSerrorCFS*100), "%", sep = "")` |      `r round(timeCFS)` |
 
-1. Your submission should consist of a link to a Github repo with your R markdown and compiled HTML file describing your analysis. Please constrain the text of the writeup to < 2000 words and the number of figures to be less than 5. It will make it easier for the graders if you submit a repo with a gh-pages branch so the HTML page can be viewed online (and you always want to make it easy on graders :-).
-2. You should also apply your machine learning algorithm to the 20 test cases available in the test data above. Please submit your predictions in appropriate format to the programming assignment for automated grading. See the programming assignment for additional details.
+The first three models have similar out of sample error rates on the validation set. However, the model using principal components takes substantially less time to train than either the first or third models. In addition, the PCA-based model is the only one that predicted all classes would be present in the validation data. So this is the model I will select as my final model.
 
+## Final model: Out of sample error estimate
 
-Does the submission build a machine learning algorithm to predict activity quality from activity monitors?
+I will produce a final out of sample error estimate for the selected model from the test data that was witheld during model training. This data comes from the remaining participant whose data were not included in the training or validation sets. Thus, it provides an estimate of how the selected model will perform on data collected from a new person.
 
-Do the authors describe what they expect the out of sample error to be and estimate the error appropriately with cross-validation?
+```{r, cache = TRUE}
+testPCA <- predict(pca, testing[, 2:53])
+testPredictions <- predict(modFitPCA$finalModel, newdata = testPCA)
+testPerformance <- table(testPredictions, testing$classe)
+testErrors <- testPerformance
+diag(testErrors) <- NA
+testOOSerror <- sum(sum(testErrors, na.rm = TRUE)) / nrow(testing)
+print(testPerformance)
+print(paste("Final out of sample error estimate:", testOOSerror))
+```
 
+The final out of sample error estimate for predicting barbell lift performance on a new subject is `r paste(round(testOOSerror*100), "%", sep = "")`. Overall, this approach seems ill-suited to predicting barbell lift performance on new subjects.
 _________________________
 
 ## References
 
 [^fn-data]: The data used in this project are [freely available](http://groupware.les.inf.puc-rio.br/har). See also: Velloso, E., Bulling, A., Gellersen, H., Ugulino, W., & Fuks, H. (2013). Qualitative activity recognition of weight lifting exercises. *Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13)*.
+
+[^fn-cfs]: Hall, M. A. (1999). [Correlation-based feature selection for machine learning (Doctoral dissertation)](http://www.cs.waikato.ac.nz/~mhall/thesis.pdf). The University of Waikato, Hamilton, New Zealand.
